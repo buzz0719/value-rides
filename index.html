@@ -1,0 +1,285 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Value Rides Pro Manager</title>
+
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+
+  <style>
+    body { font-family: Arial; padding: 20px; background: #f4f6f8; }
+    h1 { color: #222; }
+
+    input, button {
+      padding: 8px;
+      margin: 5px;
+      border-radius: 6px;
+      border: 1px solid #ccc;
+    }
+
+    button {
+      background: #222;
+      color: white;
+      cursor: pointer;
+    }
+
+    button:hover {
+      background: #444;
+    }
+
+    table {
+      width: 100%;
+      margin-top: 20px;
+      border-collapse: collapse;
+      background: white;
+    }
+
+    th, td {
+      padding: 10px;
+      border: 1px solid #ddd;
+      text-align: center;
+    }
+
+    th {
+      background: #222;
+      color: white;
+    }
+
+    .profit { color: green; font-weight: bold; }
+    .loss { color: red; font-weight: bold; }
+    .sold { background: #d4edda; }
+
+    .panel {
+      position: fixed;
+      right: 20px;
+      top: 80px;
+      background: white;
+      padding: 15px;
+      border-radius: 10px;
+      border: 1px solid #ccc;
+      width: 200px;
+    }
+  </style>
+</head>
+
+<body>
+
+<h1>🚗 Value Rides Pro Manager</h1>
+
+<div>
+  <input id="car" placeholder="Car (e.g. Micra)">
+  <input id="buy" type="number" placeholder="Buy Price">
+  <input id="repair" type="number" placeholder="Repair Cost">
+  <input id="extra" type="number" placeholder="Extra Expenses">
+  <input id="sell" type="number" placeholder="Sell Price">
+
+  <br>
+
+  <label>Bought:</label>
+  <input id="boughtDate" type="date">
+
+  <label>MOT:</label>
+  <input id="mot" type="date">
+
+  <br>
+
+  <button onclick="addCar()">Add Car</button>
+</div>
+
+<div class="panel">
+  <h3>📊 Reports</h3>
+  <button onclick="exportPDF()">Full Stock</button>
+  <br><br>
+  <button onclick="exportMonthly()">Last Month</button>
+</div>
+
+<h2>Stock</h2>
+<table id="table"></table>
+
+<h2 id="summary"></h2>
+
+<script>
+
+let cars = JSON.parse(localStorage.getItem("cars")) || [];
+
+function save() {
+  localStorage.setItem("cars", JSON.stringify(cars));
+}
+
+function addCar() {
+  let car = document.getElementById("car").value;
+  let buy = Number(document.getElementById("buy").value);
+  let repair = Number(document.getElementById("repair").value);
+  let extra = Number(document.getElementById("extra").value);
+  let sell = Number(document.getElementById("sell").value);
+  let boughtDate = document.getElementById("boughtDate").value;
+  let mot = document.getElementById("mot").value;
+
+  cars.push({
+    car, buy, repair, extra, sell,
+    boughtDate, mot,
+    sold: false,
+    saleDate: null
+  });
+
+  save();
+  render();
+}
+
+function markSold(index) {
+  cars[index].sold = true;
+  cars[index].saleDate = new Date().toISOString().split('T')[0];
+  save();
+  render();
+}
+
+function deleteCar(index) {
+  cars.splice(index, 1);
+  save();
+  render();
+}
+
+function daysInStock(bought, sold) {
+  if (!bought) return "-";
+  let end = sold ? new Date(sold) : new Date();
+  let start = new Date(bought);
+  return Math.floor((end - start) / (1000*60*60*24));
+}
+
+function render() {
+  let table = document.getElementById("table");
+
+  table.innerHTML = `
+    <tr>
+      <th>Car</th>
+      <th>Buy</th>
+      <th>Repair</th>
+      <th>Extra</th>
+      <th>Sell</th>
+      <th>Profit</th>
+      <th>Days</th>
+      <th>MOT</th>
+      <th>Status</th>
+      <th>Actions</th>
+    </tr>
+  `;
+
+  let totalProfit = 0;
+  let monthlyProfit = 0;
+  let monthlySales = 0;
+
+  let thisMonth = new Date().getMonth();
+
+  cars.forEach((c, i) => {
+    let profit = c.sell - (c.buy + c.repair + c.extra);
+    let days = daysInStock(c.boughtDate, c.saleDate);
+
+    if (c.sold) {
+      totalProfit += profit;
+
+      let saleMonth = new Date(c.saleDate).getMonth();
+      if (saleMonth === thisMonth) {
+        monthlyProfit += profit;
+        monthlySales++;
+      }
+    }
+
+    table.innerHTML += `
+      <tr class="${c.sold ? 'sold' : ''}">
+        <td>${c.car}</td>
+        <td>£${c.buy}</td>
+        <td>£${c.repair}</td>
+        <td>£${c.extra}</td>
+        <td>£${c.sell}</td>
+        <td class="${profit >= 0 ? 'profit' : 'loss'}">£${profit}</td>
+        <td>${days}</td>
+        <td>${c.mot || '-'}</td>
+        <td>${c.sold ? 'SOLD' : 'IN STOCK'}</td>
+        <td>
+          ${!c.sold ? `<button onclick="markSold(${i})">Sold</button>` : ''}
+          <button onclick="deleteCar(${i})">Delete</button>
+        </td>
+      </tr>
+    `;
+  });
+
+  document.getElementById("summary").innerText =
+    `Total Profit: £${totalProfit} | This Month: £${monthlyProfit} (${monthlySales} sales)`;
+}
+
+function exportPDF() {
+  const { jsPDF } = window.jspdf;
+  const doc = new jsPDF();
+
+  doc.text("Value Rides - Stock Report", 10, 10);
+
+  let y = 20;
+
+  cars.forEach((c) => {
+    let profit = c.sell - (c.buy + c.repair + c.extra);
+
+    doc.text(
+      `${c.car} | Buy £${c.buy} | Sell £${c.sell} | Profit £${profit} | ${c.sold ? 'SOLD' : 'STOCK'}`,
+      10,
+      y
+    );
+
+    y += 10;
+  });
+
+  doc.save("stock_report.pdf");
+}
+
+function exportMonthly() {
+  const { jsPDF } = window.jspdf;
+  const doc = new jsPDF();
+
+  let lastMonth = new Date().getMonth() - 1;
+  if (lastMonth < 0) lastMonth = 11;
+
+  let totalProfit = 0;
+  let totalSpent = 0;
+  let totalSales = 0;
+
+  doc.text("Value Rides - Last Month Report", 10, 10);
+
+  let y = 20;
+
+  cars.forEach((c) => {
+    if (c.sold) {
+      let saleMonth = new Date(c.saleDate).getMonth();
+
+      if (saleMonth === lastMonth) {
+        let cost = c.buy + c.repair + c.extra;
+        let profit = c.sell - cost;
+
+        totalProfit += profit;
+        totalSpent += cost;
+        totalSales += c.sell;
+
+        doc.text(
+          `${c.car} | Cost £${cost} | Sold £${c.sell} | Profit £${profit}`,
+          10,
+          y
+        );
+
+        y += 10;
+      }
+    }
+  });
+
+  y += 10;
+  doc.text(`Total Spent: £${totalSpent}`, 10, y);
+  y += 10;
+  doc.text(`Total Sales: £${totalSales}`, 10, y);
+  y += 10;
+  doc.text(`Total Profit: £${totalProfit}`, 10, y);
+
+  doc.save("monthly_report.pdf");
+}
+
+render();
+
+</script>
+
+</body>
+</html>
